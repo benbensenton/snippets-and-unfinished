@@ -1,0 +1,247 @@
+<p style="color:#FFA500;font-size:18px;"> <b> Persistant Data Storage and retrival </b></p>    
+<li>write and load data onto flat file in hdf5 format  <br>
+<li>no Database overhead  <br>
+<li><i>ViTables</i> or <i>HDFView</i> GUI Program to check HDF5 Structure...........pip install ViTables in venv cmd then run: vitables  <br>
+<li><i>PyTables</i> or <i>h5py</i> are HDF5 Python Modules  <br> 
+<li>Interesting: pystore with parquet, https://github.com/ranaroussi/pystore  <br>   
+<li>python3 -m pip install tables <br>    
+<br>
+    
+<li><b>Things to do:</b><ol>
+<li>create a module to write and read hdf5 to disk, e.g. with OOP classes  </li>
+<li>make a write protection for old data</li>
+<li>make redundancy of data</li>
+</ol></li>
+<hr> 
+
+
+
+
+#import tables as tb
+import timeit
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+
+# define path for storage from homedir 'C:/Users/x'
+store_path = 'Desktop\Stock Market\HDFStore.h5'
+store_pathfile = Path.home().joinpath(store_path)
+
+# create empty pandas hdf5 file
+if store_pathfile.is_file():
+    with pd.HDFStore(store_pathfile, 'r') as store:
+        print('HDFStore.h5 ready')
+else:
+    with pd.HDFStore(store_pathfile, 'a') as store:                                 
+        print('created:',store)
+        
+        
+        
+########## Save CSV to Container ###########
+# define csv directory
+csv_path = 'Desktop\AlphaVantage'
+csv_pathfile = Path.home().joinpath(csv_path)
+
+# make list over all file paths in directory
+pathlist=sorted(csv_pathfile.glob('**/*.csv'))
+
+
+# check if key exist in store and get the timestamp from the last entrie
+# or create the missing key and write straight to disk
+def getLastStoreEntry(timetype, symbol, new_data, store_pathfile = store_pathfile, datatype='Price_Volume', column='timestamp'):
+    try:
+        # check if key exist and if, get last index datetime from store                                  
+        store_last_entry = pd.read_hdf(store_pathfile, key=f'/{symbol}/{datatype}/{timetype}',mode='r',start=-1, columns=[column])
+        store_index_value = store_last_entry.index[0] if store_last_entry.index[0] else None 
+        # check if store_index_value is found in new_data Dataframe
+        if store_index_value in new_data.index.values:
+            # case 2 key exist in store and last store entrie exist in new data 
+            # slice the new dataframe to include only new data starting from (store_index_value +1)
+            p = new_data.index.get_loc(store_index_value)
+            start_position = p+1
+            df_slice = new_data.iloc[start_position::,:]
+            # it can happen that df index runs out of range with +1, that only 1 more item is written or that many more are written
+            if not df_slice.empty:
+                message2, error2 = hdf_append(timetype, symbol, df_slice, datatype)
+                message1 = 'store key exist, found store Indexvalue in Dataframe'
+                error1 = 0
+                return message1, error1, message2, error2
+            else:
+                message = f'store key exist for Symbol {symbol}, no new Data in Dataframe, last Timestamp in Store == last Timestamp in Dataframe'
+                q = 0; q1=0; q2=0
+                return message, q, q1, q2
+        else:
+            # case 3, key exist but last store value is not found in dataframe
+            # append all new data without slicing
+            message2, error2 = hdf_append(timetype, symbol, new_data, datatype)
+            # time difference between last store timestamp
+            message1 = 'store key exist but did not find store Indexvalue in Dataframe'
+            error1 = 0
+            return message1, error1, message2, error2
+    except KeyError as e:             
+        # case 1 KeyError raised when key not found in store, ergo dir does not exists ergo new data is uniquly new, ergo writting all data
+        message, ee = hdf_create(timetype,symbol,new_data, datatype)
+        return message,symbol,e,ee
+    
+            
+
+# hdf append writer function
+def hdf_append(timetype, symbol, df, store_pathfile = store_pathfile, datatype):
+    # check dataframe timestamp uniqueness against timestamp uniqueness in store_pathfile
+    #unique_timestamp = get_unique_timestamp(timetype, symbol, df, store_pathfile)
+    try:
+        with pd.HDFStore(store_pathfile, 'a') as store:
+            # only append unigue enties
+            if unique_timestamp:
+                store.append(f'/{symbol}/Price_Volume/{timetype}',unique_timestamp, axes=None, index=True)
+                message = f'Symbol data for {symbol} appended in Store for Price_Volume {timetype}'
+                e = 0
+                return message, e
+            else:
+                message = 'no unique entries in new dataframe'
+                e = 0
+                return message, e
+    except Exception as e:
+        message = f'error occured while aooending to HDF5 Storage for Symbol: {symbol}'
+        return message, e
+        
+
+# hdf create writer function
+def hdf_create(timetype, symbol, df, store_pathfile = store_pathfile,datatype):
+    try:
+        with pd.HDFStore(store_pathfile, 'a') as store:     # need to oppen the store in append otherwise whole store gets overwritten
+            store.put(f'/{symbol}/Price_Volume/{timetype}', df, index=False, append=True, format='table', data_columns=True)
+            store.flush(fsync=True)
+            message = f'new Symbol {symbol} included in Store for Price_Volume {timetype}'
+            e = 0
+            return message, e            
+    except Exception as e:
+        message = 'error occured while writing to HDF5 Storage:'
+        return message, e
+    
+    
+'''def get_unique_timestamp(timetype, symbol, df, store_pathfile = store_pathfile):
+    result = set()
+    with pd.get_store(....) as store:
+        nrows = store.get_storer(key).nrows
+        chunksize = 1000000
+        for i in range(0,nrows/chunksize + 1):
+            result |= set(store.select_column(key,start=i*chunksize,stop=(i+1)*chunksize).unique().tolist())'''
+        
+
+
+
+# load csv from path
+if pathlist:
+    for p in pathlist:
+        # strip p to symbol only
+        s1 = str(p) 
+        s2 = str(csv_pathfile)
+        s2 = s2 + '\\'
+        if s1.startswith(s2):
+            s3 = s1.replace(s2, '')
+        s4=s3.split('_',1)
+        symbol= s4[0]
+
+        # read csv, convert type, round
+        dfi = pd.read_csv(p) 
+        dfii = dfi.astype({'open': 'float32', 'high': 'float32', 'low': 'float32', 'close': 'float32','adjusted_close': 'float32','dividend_amount': 'float32','split_coefficient': 'float32'})
+        df = dfii.round({'open': 2, 'high': 2, 'low': 2, 'close': 2,'adjusted_close': 2,'dividend_amount': 2,'split_coefficient': 2})
+
+        # make some adjustments
+        df.sort_index(ascending=False, inplace=True)        # oldest on top, newest on bottom bc hdf5 only append to EOF
+        df.dropna(inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        df.index = pd.to_datetime(df['timestamp'])
+        df.drop(['timestamp'], axis=1, inplace=True)
+
+        # get the type of data: message, minute, daily
+        time_type = (df.index[1] - df.index[0]) / pd.Timedelta("1s")
+        # select the right group to check and update the storage
+        if 60 <= time_type < 86400 :
+            timetype = 'Minute'  # minute data
+            x,y,e,ee = getLastStoreEntry(timetype, symbol, df)
+            print(f'last Indexvalue: {x}, Symbol: {y}, Error 1: {e}, Error 2: {ee}\n')
+        elif time_type >= 86400:
+            timetype = 'Daily'  # daily data
+            x,y,e,ee  = getLastStoreEntry(timetype, symbol, df)
+            print(f'last Indexvalue: {x}, Symbol: {y}, Error 1: {e}, Error 2: {ee}\n')
+        else:
+            timetype = 'ITCH'  # message data
+            x,y,e,ee = getLastStoreEntry(timetype, symbol, df)
+            print(f'last Indexvalue: {x}, Symbol: {y}, Error 1: {e}, Error 2: {ee}\n')
+else:
+    print('no files in directory')
+    
+    
+    
+#store.append('/GME/DailyQuotes',df[0:4], axes=None,index=True)
+#store.put('/GME/DailyQuotes', df[2:4],index=False, append=True, format='table', data_columns=True)
+
+
+
+
+
+dfi = pd.read_csv('C:\\Users\\x\\Desktop\\AlphaVantage\\GME_daily_adjusted_new.csv') 
+dfii = dfi.astype({'open': 'float32', 'high': 'float32', 'low': 'float32', 'close': 'float32','adjusted_close': 'float32','dividend_amount': 'float32','split_coefficient': 'float32'})
+df = dfii.round({'open': 2, 'high': 2, 'low': 2, 'close': 2,'adjusted_close': 2,'dividend_amount': 2,'split_coefficient': 2})
+
+# make some adjustments
+df.sort_index(ascending=False, inplace=True)        # oldest on top, newest on bottom bc hdf5 only append to EOF
+#df['timestamp'] = pd.to_datetime(df['timestamp'])
+df.dropna(inplace=True)
+df.reset_index(drop=True, inplace=True)
+df.index = pd.to_datetime(df['timestamp'])
+df.drop(['timestamp'], axis=1, inplace=True)
+df
+
+
+
+symbol = 'GME'
+
+# load data into df
+def LoadCsv(symbol, folder='Desktop', folder_user_ip = 'AlphaVantage' , dfunc='daily_adjusted'):
+    try:
+        # read one data file
+        path = Path.home().joinpath(folder, folder_user_ip, symbol + '_' + dfunc + '.csv' )          
+        dfi = pd.read_csv(path) 
+        dfii = dfi.astype({'open': 'float32', 'high': 'float32', 'low': 'float32', 'close': 'float32','adjusted_close': 'float32','dividend_amount': 'float32','split_coefficient': 'float32'})
+        df = dfii.round({'open': 2, 'high': 2, 'low': 2, 'close': 2,'adjusted_close': 2,'dividend_amount': 2,'split_coefficient': 2})
+        df.sort_index(ascending=False, inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        df.drop(['dividend_amount','split_coefficient'], axis=1, inplace=True)
+        df.dropna(inplace=True)
+        df.index = pd.to_datetime(df['timestamp'])
+        #df['timestamp'] = pd.to_datetime(df['timestamp'])
+        #df['timedelta'] = (df['timestamp'] - df['timestamp'].shift(1)) / pd.Timedelta("1s")
+        #df['timedelta'].replace(to_replace=np.nan, value=86400, inplace=True)                      
+        #df['timedelta'] = df['timedelta'].astype('int')
+        return df
+    except FileNotFoundError:
+        message = f'Path or File does not exist {path}'
+        return message
+df = LoadCsv(symbol)
+df
+
+
+
+
+%%timeit -n 100
+#with pd.HDFStore(store_pathfile, 'r') as store:
+        #last_date = 
+last_entry = pd.read_hdf(store_pathfile,key='/SPY/Price_Volume/Daily',mode='r',start=-1)    # columns=['timestamp','open']
+last_entry
+
+
+
+%%timeit -n 100
+store.open('r')
+test = store.select(key='/SPY/Price_Volume/Daily', where=None, start=-1, stop=None, columns=None, iterator=False, chunksize=None, auto_close=False)
+test
+
+
+store.open('r')
+d=store['/GME/DailyQuotes']
+store.close()
+d
